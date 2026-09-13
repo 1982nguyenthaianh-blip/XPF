@@ -1603,10 +1603,24 @@ static uint64_t xpf_find_namecache(uint32_t n)
     static uint64_t nchashtbl = 0;
     static uint64_t nchashmask = 0;
 
-    if (nchashtbl && nchashmask && nchashtbl != (uint64_t)-1 && nchashmask != (uint64_t)-1) {
+    if (nchashtbl != 0 && nchashmask != 0 && nchashtbl != (uint64_t)-1 && nchashmask != (uint64_t)-1) {
         if (n == 1) return nchashtbl;
         else return nchashmask;
     }
+
+    // MOV W?, #0x4C11DB7 in nchinit->(inline)init_crc32
+    uint32_t movzAny = 0, movzAnyMask = 0;
+    uint32_t movkAny = 0, movkAnyMask = 0;
+    arm64_gen_mov_imm('z', ARM64_REG_ANY, OPT_UINT64(0x1db7), OPT_UINT64_NONE, &movzAny, &movzAnyMask);
+    arm64_gen_mov_imm('k', ARM64_REG_ANY, OPT_UINT64(0x4c1), OPT_UINT64(16), &movkAny, &movkAnyMask);
+    uint32_t crcFlagInst[] = {
+            movzAny,
+            movkAny,
+    };
+    uint32_t crcFlagMask[] = {
+            movzAnyMask,
+            movkAnyMask,
+    };
 
     uint32_t blAnyInst = 0, blAnyMask = 0;
     arm64_gen_b_l(OPT_BOOL(true), OPT_UINT64_NONE, OPT_UINT64_NONE, &blAnyInst, &blAnyMask);
@@ -1624,6 +1638,7 @@ static uint64_t xpf_find_namecache(uint32_t n)
             strAnyMask,
     };
 
+    PFPatternMetric *metric = pfmetric_pattern_init(crcFlagInst, crcFlagMask, sizeof(crcFlagInst), sizeof(uint32_t));
     PFPatternMetric *hashMetric = pfmetric_pattern_init(hashinitInst, hashinitMask, sizeof(hashinitInst), sizeof(uint32_t));
 
     PFSection *sections[4];
@@ -1634,19 +1649,6 @@ static uint64_t xpf_find_namecache(uint32_t n)
 
     __block uint64_t found_tbl = 0;
     __block uint64_t found_mask = 0;
-
-    // Strategy 1: Search via crcFlag pattern across sections
-    uint32_t crcFlagInst[] = {
-            0x52800020, // MOV Wn, #0x1
-            0x12000000, // AND ...
-            0x32000000, // ORR ...
-    };
-    uint32_t crcFlagMask[] = {
-            0xFFFFFFE0, // Match any register Wn
-            0x7F800000,
-            0x7F800000,
-    };
-    PFPatternMetric *metric = pfmetric_pattern_init(crcFlagInst, crcFlagMask, sizeof(crcFlagInst), sizeof(uint32_t));
 
     for (int i = 0; i < 4; i++) {
         PFSection *sec = sections[i];
@@ -1682,52 +1684,8 @@ static uint64_t xpf_find_namecache(uint32_t n)
 
         if (found_tbl && found_mask) break;
     }
+
     pfmetric_free(metric);
-
-    // Strategy 2: Fallback — Search via MOV W1, #2 (M_CACHE) + BL _hashinit
-    if (!found_tbl || !found_mask) {
-        uint32_t mCacheInst[] = {
-            0x52800041, // MOV W1, #0x2 (M_CACHE)
-        };
-        uint32_t mCacheMask[] = {
-            0xFFFFFFFF,
-        };
-        PFPatternMetric *mCacheMetric = pfmetric_pattern_init(mCacheInst, mCacheMask, sizeof(mCacheInst), sizeof(uint32_t));
-
-        for (int i = 0; i < 4; i++) {
-            PFSection *sec = sections[i];
-            if (!sec) continue;
-
-            pfmetric_run(sec, mCacheMetric, ^(uint64_t vmaddr, bool *stop) {
-                uint64_t bl_hashinit = pfsec_find_next_inst(sec, vmaddr, 20, blAnyInst, blAnyMask);
-                if (bl_hashinit) {
-                    __block uint64_t candidate_tbl = 0;
-                    __block uint64_t candidate_mask = 0;
-                    pfmetric_run_in_range(sec, bl_hashinit, bl_hashinit + 24 * 0x4, hashMetric,
-                                          ^(uint64_t h_vmaddr, bool *h_stop) {
-                                              uint64_t adrp_val = 0, str_val = 0;
-                                              arm64_dec_adr_p(pfsec_read32(sec, h_vmaddr), h_vmaddr, &adrp_val, NULL, NULL);
-                                              arm64_dec_str_imm(pfsec_read32(sec, h_vmaddr + 0x4), NULL, NULL, &str_val, NULL, NULL);
-                                              if (candidate_tbl == 0) {
-                                                  candidate_tbl = adrp_val + str_val;
-                                              } else if (candidate_mask == 0) {
-                                                  candidate_mask = adrp_val + str_val;
-                                                  *h_stop = true;
-                                              }
-                                          });
-                    if (candidate_tbl != 0 && candidate_mask != 0 && (candidate_tbl == candidate_mask - 8 || candidate_mask == candidate_tbl + 8)) {
-                        found_tbl = (candidate_tbl < candidate_mask) ? candidate_tbl : candidate_mask;
-                        found_mask = (candidate_tbl < candidate_mask) ? candidate_mask : candidate_tbl;
-                        *stop = true;
-                    }
-                }
-            });
-
-            if (found_tbl && found_mask) break;
-        }
-        pfmetric_free(mCacheMetric);
-    }
-
     pfmetric_free(hashMetric);
 
     if (!found_tbl || !found_mask) {
