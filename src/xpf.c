@@ -389,6 +389,26 @@ XPFSet gTrigonSet = {
 	}
 };
 
+XPFSet gNameCacheSet = {
+	.name="namecache",
+	.supported=xpf_supported_always,
+	.metrics={
+		"kernelSymbol.nchashtbl",
+		"kernelSymbol.nchashmask",
+		NULL
+	},
+};
+
+XPFSet gAMFIOidsSet = {
+	.name="amfi_oids",
+	.supported=xpf_supported_16up,
+	.metrics={
+		"kernelSymbol.launch_env_logging",
+		"kernelSymbol.developer_mode_status",
+		NULL
+	},
+};
+
 XPFSet gIOSurfaceSet = {
 	.name="IOSurface",
 	.supported=xpf_supported_always,
@@ -400,6 +420,8 @@ XPFSet gIOSurfaceSet = {
 };
 
 XPFSet *gSets[] = {
+	&gNameCacheSet,
+	&gAMFIOidsSet,
 	&gBaseSet,
 	&gTranslationSet,
 	&gTranslationSPTMSet,
@@ -545,6 +567,7 @@ int xpf_start_with_kernel_path(const char *kernelPath, const char *optSptmPath, 
 	if (gXPF.kernelIsFileset) {
 		gXPF.kernelAMFITextSection = xpf_pfsec_init("com.apple.driver.AppleMobileFileIntegrity", "__TEXT_EXEC", "__text");
 		gXPF.kernelAMFIStringSection = xpf_pfsec_init("com.apple.driver.AppleMobileFileIntegrity", "__TEXT", "__cstring");
+		gXPF.kernelAMFIDataSection = xpf_pfsec_init("com.apple.driver.AppleMobileFileIntegrity", "__DATA", "__data");
 		gXPF.kernelSandboxTextSection = xpf_pfsec_init("com.apple.security.sandbox", "__TEXT_EXEC", "__text");
 		gXPF.kernelSandboxAuthStubSection = xpf_pfsec_init("com.apple.security.sandbox", "__TEXT_EXEC", "__auth_stubs");
 		gXPF.kernelSandboxStringSection = xpf_pfsec_init("com.apple.security.sandbox", "__TEXT", "__cstring");
@@ -555,6 +578,7 @@ int xpf_start_with_kernel_path(const char *kernelPath, const char *optSptmPath, 
 	}
 	else {
 		gXPF.kernelPrelinkTextSection = xpf_pfsec_init(NULL, "__PRELINK_TEXT", "__text");
+		gXPF.kernelPrelinkDataSection = xpf_pfsec_init(NULL, "__PRELINK_DATA", "__data");
 		gXPF.kernelPLKTextSection = xpf_pfsec_init(NULL, "__PLK_TEXT_EXEC", "__text");
 		gXPF.kernelKmodInfoSection = xpf_pfsec_init(NULL, "__PRELINK_INFO", "__kmod_info");
 		gXPF.kernelPrelinkInfoSection = xpf_pfsec_init(NULL, "__PRELINK_INFO", "__info");
