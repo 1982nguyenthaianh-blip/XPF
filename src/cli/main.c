@@ -31,11 +31,17 @@ int main(int argc, char *argv[]) {
 				NULL,
 				NULL,
 				NULL,
+				NULL,
+				NULL,
 			};
 
 			uint32_t idx = 0;
 			while (sets[idx] != NULL) idx++;
 
+			sets[idx++] = "namecache";
+			if (xpf_set_is_supported("amfi_oids")) {
+				sets[idx++] = "amfi_oids";
+			}
 			if (xpf_set_is_supported("sandbox")) {
 				sets[idx++] = "sandbox";
 			}
