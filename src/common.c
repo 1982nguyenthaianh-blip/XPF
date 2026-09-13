@@ -1609,25 +1609,38 @@ static uint64_t xpf_find_namecache(uint32_t n)
     }
 
     uint32_t crcFlagInst[] = {
-            0x52800021, // MOV W1, #0x1
+            0x52800020, // MOV Wn, #0x1
             0x12000000, // AND ...
             0x32000000, // ORR ...
     };
     uint32_t crcFlagMask[] = {
-            0xFFFFFFFF,
+            0xFFFFFFE0, // Match any register Wn
             0x7F800000,
             0x7F800000,
     };
 
     __block uint64_t crcFlag = 0;
+    __block PFSection *matchedSec = NULL;
     PFPatternMetric *metric = pfmetric_pattern_init(crcFlagInst, crcFlagMask, sizeof(crcFlagInst), sizeof(uint32_t));
-    pfmetric_run(gXPF.kernelTextSection, metric, ^(uint64_t vmaddr, bool *stop) {
-        crcFlag = vmaddr;
-        *stop = true;
-    });
+
+    PFSection *sections[] = {
+        gXPF.kernelBootcodeSection,
+        gXPF.kernelTextSection,
+        gXPF.kernelPrelinkTextSection,
+        gXPF.kernelPLKTextSection
+    };
+    for (int i = 0; i < sizeof(sections)/sizeof(sections[0]); i++) {
+        if (!sections[i]) continue;
+        pfmetric_run(sections[i], metric, ^(uint64_t vmaddr, bool *stop) {
+            crcFlag = vmaddr;
+            matchedSec = sections[i];
+            *stop = true;
+        });
+        if (crcFlag) break;
+    }
     pfmetric_free(metric);
 
-	if(!crcFlag) {
+	if(!crcFlag || !matchedSec) {
 		xpf_set_error("Failed to find crcFlag");
 		return 0;
 	}
@@ -1636,7 +1649,7 @@ static uint64_t xpf_find_namecache(uint32_t n)
     uint32_t blAnyInst = 0, blAnyMask = 0;
     arm64_gen_b_l(OPT_BOOL(true), OPT_UINT64_NONE, OPT_UINT64_NONE, &blAnyInst, &blAnyMask);
     uint64_t bl_hashinit = 0;
-    bl_hashinit = pfsec_find_next_inst(gXPF.kernelTextSection, crcFlag, 100, blAnyInst, blAnyMask);
+    bl_hashinit = pfsec_find_next_inst(matchedSec, crcFlag, 100, blAnyInst, blAnyMask);
 
     uint32_t adrpAnyInst = 0, adrpAnyMask = 0;
     uint32_t strAnyInst = 0, strAnyMask = 0;
@@ -1652,12 +1665,12 @@ static uint64_t xpf_find_namecache(uint32_t n)
     };
 
     metric = pfmetric_pattern_init(hashinitInst, hashinitMask, sizeof(hashinitInst), sizeof(uint32_t));
-    pfmetric_run_in_range(gXPF.kernelTextSection, bl_hashinit, bl_hashinit + 20 * 0x4, metric,
+    pfmetric_run_in_range(matchedSec, bl_hashinit, bl_hashinit + 20 * 0x4, metric,
                           ^(uint64_t vmaddr, bool *stop) {
                               uint64_t adrp_value = 0, str_value = 0;
-                              arm64_dec_adr_p(pfsec_read32(gXPF.kernelTextSection, vmaddr), vmaddr, &adrp_value, NULL,
+                              arm64_dec_adr_p(pfsec_read32(matchedSec, vmaddr), vmaddr, &adrp_value, NULL,
                                               NULL);
-                              arm64_dec_str_imm(pfsec_read32(gXPF.kernelTextSection, vmaddr + 0x4), NULL, NULL,
+                              arm64_dec_str_imm(pfsec_read32(matchedSec, vmaddr + 0x4), NULL, NULL,
                                                 &str_value, NULL, NULL);
                               if (nchashtbl == 0) {
                                   nchashtbl = adrp_value + str_value;
