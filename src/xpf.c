@@ -389,16 +389,6 @@ XPFSet gTrigonSet = {
 	}
 };
 
-XPFSet gIOSurfaceSet = {
-	.name="IOSurface",
-	.supported=xpf_supported_always,
-	.metrics={
-		"kernelStruct.IOSurface.ranges",
-		"kernelStruct.IOSurface.rangeCount",
-		NULL
-	}
-};
-
 XPFSet gNameCacheSet = {
 	.name="namecache",
 	.supported=xpf_supported_always,
@@ -417,6 +407,16 @@ XPFSet gAMFIOidsSet = {
 		"kernelSymbol.developer_mode_status",
 		NULL
 	},
+};
+
+XPFSet gIOSurfaceSet = {
+	.name="IOSurface",
+	.supported=xpf_supported_always,
+	.metrics={
+		"kernelStruct.IOSurface.ranges",
+		"kernelStruct.IOSurface.rangeCount",
+		NULL
+	}
 };
 
 XPFSet *gSets[] = {
@@ -578,8 +578,8 @@ int xpf_start_with_kernel_path(const char *kernelPath, const char *optSptmPath, 
 	}
 	else {
 		gXPF.kernelPrelinkTextSection = xpf_pfsec_init(NULL, "__PRELINK_TEXT", "__text");
-		gXPF.kernelPLKTextSection = xpf_pfsec_init(NULL, "__PLK_TEXT_EXEC", "__text");
 		gXPF.kernelPrelinkDataSection = xpf_pfsec_init(NULL, "__PRELINK_DATA", "__data");
+		gXPF.kernelPLKTextSection = xpf_pfsec_init(NULL, "__PLK_TEXT_EXEC", "__text");
 		gXPF.kernelKmodInfoSection = xpf_pfsec_init(NULL, "__PRELINK_INFO", "__kmod_info");
 		gXPF.kernelPrelinkInfoSection = xpf_pfsec_init(NULL, "__PRELINK_INFO", "__info");
 	}
@@ -881,8 +881,6 @@ void xpf_stop(void)
 	if (gXPF.kernelOSLogSection) pfsec_free(gXPF.kernelOSLogSection);
 	if (gXPF.kernelAMFITextSection) pfsec_free(gXPF.kernelAMFITextSection);
 	if (gXPF.kernelAMFIStringSection) pfsec_free(gXPF.kernelAMFIStringSection);
-	if (gXPF.kernelAMFIDataSection) pfsec_free(gXPF.kernelAMFIDataSection);
-	if (gXPF.kernelPrelinkDataSection) pfsec_free(gXPF.kernelPrelinkDataSection);
 	if (gXPF.kernelSandboxTextSection) pfsec_free(gXPF.kernelSandboxTextSection);
 	if (gXPF.kernelSandboxStringSection) pfsec_free(gXPF.kernelSandboxStringSection);
 	if (gXPF.kernelPrelinkTextSection) pfsec_free(gXPF.kernelPrelinkTextSection);

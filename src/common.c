@@ -1598,83 +1598,103 @@ static uint64_t xpf_find_task_security_config(void)
 	return imm;
 }
 
-uint64_t xpf_find_namecache(uint32_t n) {
+static uint64_t xpf_find_namecache(uint32_t n)
+{
     static uint64_t nchashtbl = 0;
     static uint64_t nchashmask = 0;
-    if (nchashtbl != 0 && nchashmask != 0) {
-        if (n == 1) {
-            return nchashtbl;
-        } else {
-            return nchashmask;
-        }
+
+    if (nchashtbl != 0 && nchashmask != 0 && nchashtbl != (uint64_t)-1 && nchashmask != (uint64_t)-1) {
+        if (n == 1) return nchashtbl;
+        else return nchashmask;
     }
 
+    // MOV W?, #0x4C11DB7 in nchinit->(inline)init_crc32
     uint32_t movzAny = 0, movzAnyMask = 0;
     uint32_t movkAny = 0, movkAnyMask = 0;
     arm64_gen_mov_imm('z', ARM64_REG_ANY, OPT_UINT64(0x1db7), OPT_UINT64_NONE, &movzAny, &movzAnyMask);
     arm64_gen_mov_imm('k', ARM64_REG_ANY, OPT_UINT64(0x4c1), OPT_UINT64(16), &movkAny, &movkAnyMask);
-    uint32_t crcFlagInst[] = { movzAny, movkAny };
-    uint32_t crcFlagMask[] = { movzAnyMask, movkAnyMask };
-
-    __block uint64_t crcFlag = 0;
-    PFPatternMetric *metric = pfmetric_pattern_init(crcFlagInst, crcFlagMask, sizeof(crcFlagInst), sizeof(uint32_t));
-
-    PFSection *sections[] = {
-        gXPF.kernelBootcodeSection,
-        gXPF.kernelTextSection,
-        gXPF.kernelPrelinkTextSection,
-        gXPF.kernelPLKTextSection,
+    uint32_t crcFlagInst[] = {
+            movzAny,
+            movkAny,
     };
-    PFSection *crcSection = NULL;
-    for (int i = 0; i < 4 && !crcFlag; i++) {
-        if (!sections[i]) continue;
-        pfmetric_run(sections[i], metric, ^(uint64_t vmaddr, bool *stop) {
-            crcFlag = vmaddr;
-            *stop = true;
-        });
-        if (crcFlag) crcSection = sections[i];
-    }
-    pfmetric_free(metric);
-
-    if (!crcFlag || !crcSection) {
-        xpf_set_error("Failed to find crcFlag");
-        return 0;
-    }
+    uint32_t crcFlagMask[] = {
+            movzAnyMask,
+            movkAnyMask,
+    };
 
     uint32_t blAnyInst = 0, blAnyMask = 0;
     arm64_gen_b_l(OPT_BOOL(true), OPT_UINT64_NONE, OPT_UINT64_NONE, &blAnyInst, &blAnyMask);
-    uint64_t bl_hashinit = pfsec_find_next_inst(crcSection, crcFlag, 100, blAnyInst, blAnyMask);
 
     uint32_t adrpAnyInst = 0, adrpAnyMask = 0;
     uint32_t strAnyInst = 0, strAnyMask = 0;
     arm64_gen_adr_p(OPT_BOOL(true), OPT_UINT64_NONE, OPT_UINT64_NONE, ARM64_REG_ANY, &adrpAnyInst, &adrpAnyMask);
     arm64_gen_str_imm(0, LDR_STR_TYPE_ANY, ARM64_REG_ANY, ARM64_REG_ANY, OPT_UINT64_NONE, &strAnyInst, &strAnyMask);
-    uint32_t hashinitInst[] = { adrpAnyInst, strAnyInst };
-    uint32_t hashinitMask[] = { adrpAnyMask, strAnyMask };
+    uint32_t hashinitInst[] = {
+            adrpAnyInst,
+            strAnyInst,
+    };
+    uint32_t hashinitMask[] = {
+            adrpAnyMask,
+            strAnyMask,
+    };
 
-    metric = pfmetric_pattern_init(hashinitInst, hashinitMask, sizeof(hashinitInst), sizeof(uint32_t));
-    pfmetric_run_in_range(crcSection, bl_hashinit, bl_hashinit + 20 * 0x4, metric,
-                          ^(uint64_t vmaddr, bool *stop) {
-                              uint64_t adrp_value = 0, str_value = 0;
-                              arm64_dec_adr_p(pfsec_read32(crcSection, vmaddr), vmaddr, &adrp_value, NULL, NULL);
-                              arm64_dec_str_imm(pfsec_read32(crcSection, vmaddr + 0x4), NULL, NULL, &str_value, NULL, NULL);
-                              if (nchashtbl == 0) {
-                                  nchashtbl = adrp_value + str_value;
-                              } else if (nchashmask == 0) {
-                                  nchashmask = adrp_value + str_value;
-                                  *stop = true;
-                                  if (nchashtbl != nchashmask - 8) {
-                                      nchashtbl = -1;
-                                      nchashmask = -1;
-                                  }
-                              }
-                          });
+    PFPatternMetric *metric = pfmetric_pattern_init(crcFlagInst, crcFlagMask, sizeof(crcFlagInst), sizeof(uint32_t));
+    PFPatternMetric *hashMetric = pfmetric_pattern_init(hashinitInst, hashinitMask, sizeof(hashinitInst), sizeof(uint32_t));
+
+    PFSection *sections[4];
+    sections[0] = gXPF.kernelBootcodeSection;
+    sections[1] = gXPF.kernelTextSection;
+    sections[2] = gXPF.kernelPrelinkTextSection;
+    sections[3] = gXPF.kernelPLKTextSection;
+
+    __block uint64_t found_tbl = 0;
+    __block uint64_t found_mask = 0;
+
+    for (int i = 0; i < 4; i++) {
+        PFSection *sec = sections[i];
+        if (!sec) continue;
+
+        pfmetric_run(sec, metric, ^(uint64_t vmaddr, bool *stop) {
+            uint64_t bl_hashinit = pfsec_find_next_inst(sec, vmaddr, 100, blAnyInst, blAnyMask);
+            if (!bl_hashinit) {
+                bl_hashinit = pfsec_find_prev_inst(sec, vmaddr, 100, blAnyInst, blAnyMask);
+            }
+            if (bl_hashinit) {
+                __block uint64_t candidate_tbl = 0;
+                __block uint64_t candidate_mask = 0;
+                pfmetric_run_in_range(sec, bl_hashinit, bl_hashinit + 24 * 0x4, hashMetric,
+                                      ^(uint64_t h_vmaddr, bool *h_stop) {
+                                          uint64_t adrp_val = 0, str_val = 0;
+                                          arm64_dec_adr_p(pfsec_read32(sec, h_vmaddr), h_vmaddr, &adrp_val, NULL, NULL);
+                                          arm64_dec_str_imm(pfsec_read32(sec, h_vmaddr + 0x4), NULL, NULL, &str_val, NULL, NULL);
+                                          if (candidate_tbl == 0) {
+                                              candidate_tbl = adrp_val + str_val;
+                                          } else if (candidate_mask == 0) {
+                                              candidate_mask = adrp_val + str_val;
+                                              *h_stop = true;
+                                          }
+                                      });
+                if (candidate_tbl != 0 && candidate_mask != 0 && (candidate_tbl == candidate_mask - 8 || candidate_mask == candidate_tbl + 8)) {
+                    found_tbl = (candidate_tbl < candidate_mask) ? candidate_tbl : candidate_mask;
+                    found_mask = (candidate_tbl < candidate_mask) ? candidate_mask : candidate_tbl;
+                    *stop = true;
+                }
+            }
+        });
+
+        if (found_tbl && found_mask) break;
+    }
+
     pfmetric_free(metric);
+    pfmetric_free(hashMetric);
 
-    if (!nchashtbl || !nchashmask) {
+    if (!found_tbl || !found_mask) {
         xpf_set_error("Failed to find nchash");
         return 0;
     }
+
+    nchashtbl = found_tbl;
+    nchashmask = found_mask;
 
     if (n == 1) {
         return nchashtbl;
@@ -1683,15 +1703,15 @@ uint64_t xpf_find_namecache(uint32_t n) {
     }
 }
 
-uint64_t xpf_find_amfi_oid(int index)
+static uint64_t xpf_find_amfi_oid(int index)
 {
 	const char* oid_name = NULL;
 	const char* oid_descr = NULL;
 
-	if (index == 2) {
+	if(index==2) {
 		oid_name = "developer_mode_status";
 		oid_descr = "developer mode status";
-	} else if (index == 1) {
+	} else if(index==1) {
 		oid_name = "launch_env_logging";
 		oid_descr = "launch environment logging";
 	} else {
@@ -1713,7 +1733,7 @@ uint64_t xpf_find_amfi_oid(int index)
 	});
 	pfmetric_free(oid_descr_metric);
 
-	if (!oid_descr_addr) {
+	if(!oid_descr_addr) {
 		xpf_set_error("Failed to find oid_descr_addr");
 		return 0;
 	}
@@ -1726,21 +1746,22 @@ uint64_t xpf_find_amfi_oid(int index)
 	});
 	pfmetric_free(oid_descr_ptr_metric);
 
-	if (!oid_descr_ptr) {
+	if(!oid_descr_ptr)  {
 		xpf_set_error("Failed to find oid_descr_ptr");
 		return 0;
 	}
 
 	uint64_t oid_name_ptr = oid_descr_ptr - 0x18;
+	
 	uint64_t oid_name_addr = pfsec_read_pointer(dataSec, oid_name_ptr);
-	if (!oid_name_addr) {
+	if(!oid_name_addr) {
 		xpf_set_error("invalid oid_name_ptr");
 		return 0;
 	}
 
 	char* oid_name_string = NULL;
 	int r = pfsec_read_string(stringSec, oid_name_addr, &oid_name_string);
-	if (!oid_name_string || strcmp(oid_name_string, oid_name) != 0) {
+	if(!oid_name_string || strcmp(oid_name_string, oid_name) != 0) {
 		xpf_set_error("Mismatch oid_name and oid_descr");
 		return 0;
 	}
@@ -1752,6 +1773,7 @@ void xpf_common_init(void)
 {
 	xpf_item_register("kernelSymbol.launch_env_logging", xpf_find_amfi_oid, (void *)(int)1);
 	xpf_item_register("kernelSymbol.developer_mode_status", xpf_find_amfi_oid, (void *)(int)2);
+
 	xpf_item_register("kernelSymbol.nchashtbl", xpf_find_namecache, (void *)(uint32_t)1);
 	xpf_item_register("kernelSymbol.nchashmask", xpf_find_namecache, (void *)(uint32_t)2);
 

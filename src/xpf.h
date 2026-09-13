@@ -72,10 +72,10 @@ typedef struct s_XPF {
 	PFSection *kernelPrelinkInfoSection;
 	PFSection *kernelBootdataInit;
 	PFSection *kernelBootcodeSection;
-	PFSection *kernelPrelinkDataSection;
 	PFSection *kernelAMFITextSection;
 	PFSection *kernelAMFIStringSection;
 	PFSection *kernelAMFIDataSection;
+	PFSection *kernelPrelinkDataSection;
 	PFSection *kernelSandboxTextSection;
 	PFSection *kernelSandboxStringSection;
 	PFSection *kernelSandboxAuthStubSection;
