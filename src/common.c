@@ -1623,17 +1623,17 @@ static uint64_t xpf_find_namecache(uint32_t n)
     __block PFSection *matchedSec = NULL;
     PFPatternMetric *metric = pfmetric_pattern_init(crcFlagInst, crcFlagMask, sizeof(crcFlagInst), sizeof(uint32_t));
 
-    PFSection *sections[] = {
-        gXPF.kernelBootcodeSection,
-        gXPF.kernelTextSection,
-        gXPF.kernelPrelinkTextSection,
-        gXPF.kernelPLKTextSection
-    };
-    for (int i = 0; i < sizeof(sections)/sizeof(sections[0]); i++) {
-        if (!sections[i]) continue;
-        pfmetric_run(sections[i], metric, ^(uint64_t vmaddr, bool *stop) {
+    PFSection *sections[4];
+    sections[0] = gXPF.kernelBootcodeSection;
+    sections[1] = gXPF.kernelTextSection;
+    sections[2] = gXPF.kernelPrelinkTextSection;
+    sections[3] = gXPF.kernelPLKTextSection;
+    for (int i = 0; i < 4; i++) {
+        PFSection *sec = sections[i];
+        if (!sec) continue;
+        pfmetric_run(sec, metric, ^(uint64_t vmaddr, bool *stop) {
             crcFlag = vmaddr;
-            matchedSec = sections[i];
+            matchedSec = sec;
             *stop = true;
         });
         if (crcFlag) break;
